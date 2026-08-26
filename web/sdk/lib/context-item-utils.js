@@ -12,7 +12,7 @@
 
 import { createCopyButton } from './copy-button.js';
 import { renderMarkdown, decorateCodeBlocks } from './markdown.js';
-import { highlightCode } from './syntax-highlight.js';
+import { highlightCode, highlightCodeLines } from './syntax-highlight.js';
 import { injectStylesOnce } from './inject-styles.js';
 
 /**
@@ -295,18 +295,21 @@ export function createCodeBlock(options) {
     // counter-reset starts at lineNumberStart - 1 so first increment produces lineNumberStart
     code.style.setProperty('--line-start', String(lineNumberStart - 1));
 
-    for (const line of lines) {
+    // One highlight pass over the whole block, then split into per-line markup:
+    // each line still lands in its own grid cell (so it aligns with its line
+    // number and wraps on its own), but a construct spanning several lines — a
+    // block comment, a multi-line template literal — is tokenised as a whole
+    // rather than restarting on every line. The shared engine still falls back
+    // to escaped text for unbundled languages.
+    const highlighted = highlightCodeLines(text, language);
+
+    for (let i = 0; i < lines.length; i++) {
       const numSpan = document.createElement('span');
       numSpan.className = 'ci-line-num';
 
-      // Highlight each line independently so it aligns with its grid line
-      // number (and keeps wrap-per-line alignment). The tradeoff is that a
-      // construct spanning multiple lines — a block comment, a multi-line
-      // template literal — is tokenised per line rather than as a whole; the
-      // shared engine still falls back to escaped text for unbundled languages.
       const lineSpan = document.createElement('span');
       lineSpan.className = 'ci-line';
-      lineSpan.innerHTML = highlightCode(line, language);
+      lineSpan.innerHTML = highlighted[i] ?? '';
 
       code.appendChild(numSpan);
       code.appendChild(lineSpan);

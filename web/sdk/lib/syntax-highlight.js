@@ -36,32 +36,181 @@ const BASH_REDIRECT_OPERATORS = new Set(['<', '>', '<<', '>>', '<<<', '<&', '>&'
  */
 
 /**
+ * File extension → language id. The single client-side language map: a dropped
+ * file never reaches the server, so it has no server-detected `language` to fall
+ * back on and the browser must be able to work this out on its own. Shared by
+ * the text file viewer, the diff viewer and anything else holding only a path.
+ *
+ * Every value here must have a grammar loaded (or be handled specially, like
+ * `bash`, or be the deliberate `text` fallback) — `unit:language-coverage`
+ * fails the build if a mapping names a grammar that isn't bundled.
+ * @type {Record<string, string>}
+ */
+export const LANGUAGE_BY_EXT = {
+  js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  ts: 'typescript', jsx: 'javascript', tsx: 'typescript',
+  py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java',
+  c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', hpp: 'cpp',
+  cs: 'csharp', php: 'php', swift: 'swift', kt: 'kotlin',
+  sh: 'bash', bash: 'bash', zsh: 'bash',
+  json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
+  xml: 'xml', html: 'html', css: 'css', scss: 'scss',
+  md: 'markdown', sql: 'sql',
+};
+
+/**
+ * Aliases a fence info string or a caller may use that Prism does not register
+ * itself. Prism already aliases plenty (`js`, `ts`, `py`, `html`/`xml`/`svg` →
+ * `markup`), so this covers only the gaps — anything not listed is passed
+ * through unchanged and resolved against `Prism.languages` as-is.
+ * @type {Record<string, string>}
+ */
+const LANGUAGE_ALIASES = {
+  node: 'javascript',
+  golang: 'go',
+  rs: 'rust',
+  'c++': 'cpp', cxx: 'cpp', cc: 'cpp', hpp: 'cpp', hh: 'cpp',
+  h: 'c',
+  'c#': 'csharp', cs: 'csharp',
+  sh: 'bash', shell: 'bash', zsh: 'bash', ksh: 'bash', console: 'bash', shellsession: 'bash',
+  yml: 'yaml',
+  htm: 'html',
+  kt: 'kotlin', kts: 'kotlin',
+  md: 'markdown', mdx: 'markdown',
+  rb: 'ruby',
+  plaintext: 'text', plain: 'text', txt: 'text',
+};
+
+/**
+ * Resolve a language identifier to the id the highlighter understands.
+ * @param {string} id - Language id, fence info string or file-type alias
+ * @returns {string} Canonical language id ('text' when there is nothing to go on)
+ */
+export function normalizeLanguageId(id) {
+  const key = String(id ?? '').trim().toLowerCase();
+  if (!key) return 'text';
+  return LANGUAGE_ALIASES[key] || key;
+}
+
+/**
+ * Language id for a file path, from its extension alone.
+ * @param {string} path - File path (either separator)
+ * @returns {string} Language id, or 'text' when the extension is unknown
+ */
+export function languageForPath(path) {
+  const ext = (path || '').split(/[\\/]/).pop()?.split('.').pop()?.toLowerCase() || '';
+  return LANGUAGE_BY_EXT[ext] || 'text';
+}
+
+/**
  * Highlight a code string, returning safe HTML.
  *
  * Prism escapes the source as it tokenises, so the returned string is safe to
  * assign to `innerHTML`. When Prism or the grammar is missing we fall back to
  * `escapeHtml`, so the return value is always insertion-safe.
  * @param {string} code - Source code to highlight
- * @param {string} language - Prism language id (e.g. 'bash', 'json', 'python')
+ * @param {string} language - Language id or alias (e.g. 'bash', 'json', 'py')
  * @returns {string} Highlighted (or escaped) HTML
  */
 export function highlightCode(code, language) {
   const text = (code === null || code === undefined) ? '' : String(code);
-  if (language === 'bash' || language === 'sh' || language === 'shell') {
+  const lang = normalizeLanguageId(language);
+  if (lang === 'bash') {
     return highlightBashCommand(text);
   }
 
   /** @type {any} */
   const Prism = typeof window !== 'undefined' ? (/** @type {any} */ (window)).Prism : undefined;
-  const grammar = Prism?.languages?.[language];
+  const grammar = Prism?.languages?.[lang];
   if (Prism && grammar) {
     try {
-      return Prism.highlight(text, grammar, language);
+      return Prism.highlight(text, grammar, lang);
     } catch (error) {
       console.error('[syntax-highlight] highlighting failed:', error);
     }
   }
   return escapeHtml(text);
+}
+
+/**
+ * Highlight a block and hand back one safe HTML string per source line.
+ *
+ * Surfaces that lay code out line by line — a line-numbered grid, a diff row —
+ * cannot use one blob of markup, but highlighting each line separately gets the
+ * tokens wrong: a block comment or a multi-line template literal is only
+ * recognisable as a whole. So the block is tokenised once and the markup is then
+ * split at newlines, closing every open element at the end of a line and
+ * reopening it at the start of the next. Each returned line is therefore
+ * balanced markup on its own, and the concatenation is the original block.
+ *
+ * The scanner only ever re-balances markup produced above it (Prism's `<span>`s
+ * or `highlightBashCommand`'s), never caller-supplied HTML, so it needs no
+ * general-purpose parser.
+ * @param {string} code - Source code to highlight
+ * @param {string} language - Language id or alias
+ * @returns {string[]} One highlighted (or escaped) HTML string per line
+ */
+export function highlightCodeLines(code, language) {
+  const text = (code === null || code === undefined) ? '' : String(code);
+  return splitHighlightedLines(highlightCode(text, language));
+}
+
+/**
+ * Split highlighted markup into per-line strings, re-balancing open elements.
+ * @param {string} html - Markup from {@link highlightCode}
+ * @returns {string[]} One balanced HTML string per line
+ */
+function splitHighlightedLines(html) {
+  /** @type {string[]} */
+  const lines = [];
+  /**
+   * Elements open at the current position, outermost first.
+   * @type {{tag: string, open: string}[]}
+   */
+  const stack = [];
+  let current = '';
+
+  /** @param {string} chunk - Text (already escaped) between two tags. */
+  const addText = (chunk) => {
+    if (!chunk) return;
+    const parts = chunk.split('\n');
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) {
+        for (let j = stack.length - 1; j >= 0; j--) {
+          current += `</${/** @type {{tag: string, open: string}} */ (stack[j]).tag}>`;
+        }
+        lines.push(current);
+        current = stack.map((entry) => entry.open).join('');
+      }
+      current += parts[i] ?? '';
+    }
+  };
+
+  const tagPattern = /<(\/?)([a-zA-Z][\w-]*)([^>]*)>/g;
+  let last = 0;
+  /** @type {RegExpExecArray|null} */
+  let match;
+  while ((match = tagPattern.exec(html)) !== null) {
+    addText(html.slice(last, match.index));
+    last = tagPattern.lastIndex;
+    const full = match[0];
+    const closing = match[1] || '';
+    const tag = match[2] || '';
+    const attrs = match[3] || '';
+    if (closing) {
+      // A close with nothing open can only come from markup we didn't emit; drop
+      // it rather than letting it unbalance the lines that follow.
+      if (stack.length === 0) continue;
+      stack.pop();
+    } else if (!attrs.endsWith('/')) {
+      stack.push({ tag, open: full });
+    }
+    current += full;
+  }
+  addText(html.slice(last));
+  lines.push(current);
+
+  return lines;
 }
 
 /**

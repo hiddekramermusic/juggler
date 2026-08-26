@@ -120,6 +120,7 @@ import { runTests as runMarkdownSanitizerTests } from '../unit-tests/markdown-sa
 import { runTests as runMarkdownScopedCssTests } from '../unit-tests/markdown-scoped-css-test.js';
 import { runTests as runMarkdownTaskListTests } from '../unit-tests/markdown-task-list-test.js';
 import { runTests as runUserMessageMarkdownTests } from '../unit-tests/user-message-markdown-test.js';
+import { runTests as runHighlightLinesTests } from '../unit-tests/highlight-lines-test.js';
 import { runTests as runExternalLinkTests } from '../unit-tests/external-link-test.js';
 import { runTests as runLinkGuardTests } from '../unit-tests/link-guard-test.js';
 import { runTests as runAnsiTests } from '../unit-tests/ansi-test.js';
@@ -391,6 +392,7 @@ const UNIT_TEST_SUITES = [
   { name: 'unit:markdown-scoped-css', run: runMarkdownScopedCssTests },
   { name: 'unit:markdown-task-list', run: runMarkdownTaskListTests },
   { name: 'unit:user-message-markdown', run: runUserMessageMarkdownTests },
+  { name: 'unit:highlight-lines', run: runHighlightLinesTests },
   { name: 'unit:external-link', run: runExternalLinkTests },
   { name: 'unit:link-guard', run: runLinkGuardTests },
   { name: 'unit:ansi', run: runAnsiTests },

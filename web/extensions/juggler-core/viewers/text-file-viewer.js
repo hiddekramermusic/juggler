@@ -5,25 +5,7 @@
 
 import FileViewer from 'juggler/file-viewer';
 import { createFileContentBlock, formatFileContentForLLM } from 'juggler/item-utils';
-
-/**
- * Extension → syntax-highlighting language identifier. The single client-side
- * language map: a dropped file never reaches the server, so it has no
- * server-detected `language` to fall back on and the browser must be able to
- * work this out on its own.
- * @type {Record<string, string>}
- */
-const LANGUAGE_BY_EXT = {
-  js: 'javascript', mjs: 'javascript', cjs: 'javascript',
-  ts: 'typescript', jsx: 'javascript', tsx: 'typescript',
-  py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java',
-  c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', hpp: 'cpp',
-  cs: 'csharp', php: 'php', swift: 'swift', kt: 'kotlin',
-  sh: 'bash', bash: 'bash', zsh: 'bash',
-  json: 'json', yaml: 'yaml', yml: 'yaml', toml: 'toml',
-  xml: 'xml', html: 'html', css: 'css', scss: 'scss',
-  md: 'markdown', sql: 'sql',
-};
+import { languageForPath } from 'juggler/ui';
 
 /**
  * TextFileViewer — the fallback viewer, and the one that handles almost
@@ -66,8 +48,7 @@ class TextFileViewer extends FileViewer {
    */
   static languageFor(source) {
     if (source.language) return source.language;
-    const ext = (source.path || '').split(/[\\/]/).pop()?.split('.').pop()?.toLowerCase() || '';
-    return LANGUAGE_BY_EXT[ext] || 'text';
+    return languageForPath(source.path || '');
   }
 
   /**

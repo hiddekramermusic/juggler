@@ -53,7 +53,14 @@ export {
 } from '../js/utils/properties-panel-helpers.js';
 
 // Syntax highlighting (Prism-backed, safe fallback)
-export { highlightCode, createHighlightedCode } from './lib/syntax-highlight.js';
+export {
+  highlightCode,
+  highlightCodeLines,
+  createHighlightedCode,
+  languageForPath,
+  normalizeLanguageId,
+  LANGUAGE_BY_EXT,
+} from './lib/syntax-highlight.js';
 
 // Markdown rendering
 export {

@@ -24,6 +24,13 @@
  *
  * The text is assumed to only ever GROW at the end. A rewrite of the sealed
  * prefix is detected by fingerprint and answered with a full re-render.
+ *
+ * Syntax highlighting follows the same split. A sealed segment is final, so its
+ * code blocks are coloured as they are sealed. The live tail is not: a fence
+ * that is still arriving would be re-tokenised on every delta, for tokens that
+ * are wrong until it closes. Instead the tail is highlighted once the text stops
+ * growing (see SETTLE_MS), which also covers the common case of a code block at
+ * the very end of a message, where nothing follows it to seal it.
  * @module utils/streaming-markdown
  */
 
@@ -51,6 +58,14 @@ const FINGERPRINT_LEN = 64;
  * line), so the detector never starts exactly where the last one stopped.
  */
 const DETECT_OVERLAP = 512;
+
+/**
+ * Quiet period after which the live tail is syntax-highlighted. Deltas arrive
+ * far faster than this while a reply streams, so in practice the pass runs once,
+ * when the text stops growing. A provider that stalls mid-block pays for one
+ * extra (idempotent) pass.
+ */
+const SETTLE_MS = 250;
 
 /**
  * The end of the longest prefix of `text` that can be parsed now and never
@@ -110,7 +125,9 @@ export function findSealPoint(text, from) {
  * @param {boolean} [options.detect=true] - Choose between Markdown and verbatim
  *   per update. False renders as Markdown always, for a source that is known to
  *   be Markdown (an assistant reply) rather than possibly raw prose.
- * @returns {{update: (text: string) => void, reset: () => void}} Controller.
+ * @returns {{update: (text: string) => void, reset: () => void, settle: () => void}}
+ *   Controller. `settle` runs the highlight pass over the live tail immediately;
+ *   it is armed automatically on a quiet period, so callers rarely need it.
  */
 export function createStreamingMarkdown(host, options = {}) {
   const { escapeXml = true, detect = true } = options;
@@ -128,6 +145,26 @@ export function createStreamingMarkdown(host, options = {}) {
   let marker = null;
   /** How much of the text the Markdown detector has already looked at. */
   let detectedUpTo = 0;
+  /** Pending settle pass, armed by each update and disarmed by the next. */
+  let settleTimer = 0;
+
+  /**
+   * Highlight what is still live. The sealed nodes were coloured as they were
+   * sealed; this catches the tail — most importantly a fenced block at the very
+   * end of a message, which never seals because nothing follows it.
+   * Idempotent (decorateCodeBlocks skips a block it has already coloured), so
+   * running it more than once costs nothing.
+   */
+  const settle = () => {
+    if (settleTimer) { clearTimeout(settleTimer); settleTimer = 0; }
+    if (mode === 'markdown') decorateCodeBlocks(host, { highlight: true });
+  };
+
+  /** Re-arm the settle pass, pushing it out past the next delta. */
+  const armSettle = () => {
+    if (settleTimer) clearTimeout(settleTimer);
+    settleTimer = setTimeout(settle, SETTLE_MS);
+  };
 
   const reset = () => {
     mode = null;
@@ -136,6 +173,7 @@ export function createStreamingMarkdown(host, options = {}) {
     refDefSeen = false;
     marker = null;
     detectedUpTo = 0;
+    if (settleTimer) { clearTimeout(settleTimer); settleTimer = 0; }
     host.replaceChildren();
   };
 
@@ -160,12 +198,16 @@ export function createStreamingMarkdown(host, options = {}) {
    * holder. Decorating before insertion keeps the pass proportional to the new
    * segment rather than to everything rendered so far.
    * @param {string} md - Markdown source for one or more whole blocks.
+   * @param {boolean} highlight - Syntax-highlight this segment's code blocks.
+   *   Only ever true for a sealed segment: the live tail is re-parsed on every
+   *   delta, and a fence that is still arriving would be re-tokenised each time
+   *   for tokens that are wrong until it closes.
    * @returns {HTMLElement} Holder whose children are the rendered nodes.
    */
-  const parse = (md) => {
+  const parse = (md, highlight) => {
     const holder = document.createElement('div');
     holder.innerHTML = renderMarkdown(md, { escapeXml });
-    decorateCodeBlocks(holder);
+    decorateCodeBlocks(holder, { highlight });
     return holder;
   };
 
@@ -182,7 +224,9 @@ export function createStreamingMarkdown(host, options = {}) {
     host.replaceChildren();
     marker = document.createComment('live');
     host.appendChild(marker);
-    moveInto(parse(text), null);
+    // Nothing is sealed after this, so all of it is live: leave it uncoloured
+    // and let the settle pass do the highlighting once the text stops growing.
+    moveInto(parse(text, false), null);
     sealedUpTo = 0;
     fingerprint = '';
   };
@@ -202,6 +246,7 @@ export function createStreamingMarkdown(host, options = {}) {
 
   return {
     reset,
+    settle,
 
     /** @param {string} text - The full accumulated text, so far. */
     update(text) {
@@ -212,6 +257,7 @@ export function createStreamingMarkdown(host, options = {}) {
         renderPlain(text);
         mode = 'plain';
         host.className = 'plain';
+        if (settleTimer) { clearTimeout(settleTimer); settleTimer = 0; }
         return;
       }
 
@@ -226,6 +272,7 @@ export function createStreamingMarkdown(host, options = {}) {
 
       if (restart) {
         renderWhole(text);
+        armSettle();
         return;
       }
 
@@ -239,16 +286,18 @@ export function createStreamingMarkdown(host, options = {}) {
           // was sealed may now be wrong: re-parse the lot, and stop sealing.
           refDefSeen = true;
           renderWhole(text);
+          armSettle();
           return;
         }
         if (seal > sealedUpTo) {
-          moveInto(parse(text.slice(sealedUpTo, seal)), live);
+          moveInto(parse(text.slice(sealedUpTo, seal), true), live);
           sealedUpTo = seal;
           fingerprint = text.slice(Math.max(0, seal - FINGERPRINT_LEN), seal);
         }
       }
 
-      moveInto(parse(text.slice(sealedUpTo)), null);
+      moveInto(parse(text.slice(sealedUpTo), false), null);
+      armSettle();
     },
   };
 }

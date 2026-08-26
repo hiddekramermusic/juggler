@@ -100,6 +100,10 @@ export async function runTests(_ctx) {
       for (let i = 1; i <= steps; i++) {
         s.update(text.slice(0, Math.round((text.length * i) / steps)));
       }
+      // Settle explicitly rather than waiting out the debounce: the comparison
+      // is against fully-rendered output, and a timing-dependent test would be
+      // flaky. Sealed blocks are already highlighted; this catches the tail.
+      s.settle();
       return { html: markup(host), parsedChars };
     } finally {
       Object.defineProperty(window, 'marked', { configurable: true, writable: true, value: real });
@@ -115,7 +119,9 @@ export async function runTests(_ctx) {
   const oneShot = (text) => {
     const host = mount();
     try {
-      createStreamingMarkdown(host, { escapeXml: true }).update(text);
+      const s = createStreamingMarkdown(host, { escapeXml: true });
+      s.update(text);
+      s.settle();
       return markup(host);
     } finally { host.remove(); }
   };
@@ -251,6 +257,39 @@ export async function runTests(_ctx) {
       assert(host.className === 'markdown', `expected a switch to Markdown, was "${host.className}"`);
       assert(!!host.querySelector('strong'), 'the construct renders');
       assert(!host.textContent.includes('**'), 'the markers are consumed, not shown');
+    } finally { host.remove(); }
+  });
+
+  await run('a fence is highlighted once it is sealed, not while it arrives', () => {
+    const host = mount();
+    try {
+      const s = createStreamingMarkdown(host, { escapeXml: false, detect: false });
+      // Half-arrived fence: still the live tail, so it stays plain.
+      s.update('Trying this:\n\n```js\nconst a = 1;');
+      assert(host.querySelector('pre code') !== null, 'the partial block should still render');
+      assert(host.querySelector('pre code .token') === null,
+        'a fence that is still arriving must not be tokenised');
+
+      // Closed, with a blank line after it and more text: now it seals.
+      s.update('Trying this:\n\n```js\nconst a = 1;\n```\n\nThat should do it.\n\n');
+      assert(host.querySelector('pre code .token') !== null,
+        'a sealed fence should be highlighted');
+      assert(host.querySelector('pre code')?.textContent?.trim() === 'const a = 1;',
+        'highlighting changed the visible text');
+    } finally { host.remove(); }
+  });
+
+  await run('a fence at the very end of a message is highlighted when it settles', () => {
+    const host = mount();
+    try {
+      const s = createStreamingMarkdown(host, { escapeXml: false, detect: false });
+      // Nothing follows the block, so it never seals — only the settle pass can
+      // colour it. This is the shape of most assistant replies that end in code.
+      s.update('Here:\n\n```js\nconst a = 1;\n```');
+      assert(host.querySelector('pre code .token') === null, 'the tail starts out plain');
+      s.settle();
+      assert(host.querySelector('pre code .token') !== null,
+        'settling should highlight the trailing block');
     } finally { host.remove(); }
   });
 

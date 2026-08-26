@@ -176,6 +176,23 @@
     <script src="/v{{.StaticVersion}}/js/vendor/prism-bash.js"></script>
     <script src="/v{{.StaticVersion}}/js/vendor/prism-json.js"></script>
     <script src="/v{{.StaticVersion}}/js/vendor/prism-markdown.js"></script>
+    <!-- Grammars must follow what they extend: markup-templating and scss before
+         php and after css/markup (both of which prism-core.js already carries). -->
+    <script src="/v{{.StaticVersion}}/js/vendor/prism-markup-templating.js"></script>
+    <script src="/v{{.StaticVersion}}/js/vendor/prism-scss.js"></script>
+    <script src="/v{{.StaticVersion}}/js/vendor/prism-c.js"></script>
+    <script src="/v{{.StaticVersion}}/js/vendor/prism-cpp.js"></script>
+    <script src="/v{{.StaticVersion}}/js/vendor/prism-csharp.js"></script>
+    <script src="/v{{.StaticVersion}}/js/vendor/prism-java.js"></script>
+    <script src="/v{{.StaticVersion}}/js/vendor/prism-kotlin.js"></script>
+    <script src="/v{{.StaticVersion}}/js/vendor/prism-ruby.js"></script>
+    <script src="/v{{.StaticVersion}}/js/vendor/prism-rust.js"></script>
+    <script src="/v{{.StaticVersion}}/js/vendor/prism-swift.js"></script>
+    <script src="/v{{.StaticVersion}}/js/vendor/prism-php.js"></script>
+    <script src="/v{{.StaticVersion}}/js/vendor/prism-yaml.js"></script>
+    <script src="/v{{.StaticVersion}}/js/vendor/prism-toml.js"></script>
+    <script src="/v{{.StaticVersion}}/js/vendor/prism-sql.js"></script>
+    <script src="/v{{.StaticVersion}}/js/vendor/prism-diff.js"></script>
 
     <!-- diff-match-patch for proper diff algorithm -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/diff_match_patch/20121119/diff_match_patch.js"></script>

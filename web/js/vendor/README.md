@@ -26,10 +26,30 @@ adds to its size.
 | `marked.min.js` | [marked](https://github.com/markedjs/marked) | 18.0.10 | jsDelivr (`npm/marked@18.0.10/lib/marked.umd.js`) | MIT | 2026-08-22 |
 | `yjs.mjs` | [Yjs](https://github.com/yjs/yjs) | 13.6.x (bundled with its `lib0` dependencies) | Yjs release, bundled | MIT | before this file existed |
 | `y-generic-sync.js` | Yjs sync protocol helper | — | bundled alongside `yjs.mjs` | MIT | before this file existed |
-| `prism-*.js` | [Prism](https://github.com/PrismJS/prism) | 1.29.0 | jsDelivr (`npm/prismjs@1.29.0`), minified by Terser 5.37.0 | MIT | before this file existed |
+| `prism-core.js`, `prism-{markup,css,javascript,typescript,python,go,bash,json,markdown}.js` | [Prism](https://github.com/PrismJS/prism) | 1.29.0 | jsDelivr (`npm/prismjs@1.29.0`), minified by Terser 5.37.0 | MIT | before this file existed |
+| `prism-{markup-templating,scss,c,cpp,csharp,java,kotlin,ruby,rust,swift,php,yaml,toml,sql,diff}.js` | Prism | 1.29.0 | jsDelivr (`npm/prismjs@1.29.0/components/prism-<lang>.min.js`) | MIT | 2026-08-26 |
 
 The rows marked "before this file existed" were backfilled from the version
 banners inside the files themselves; treat their vendored dates as unknown.
+
+## Prism notes
+
+**`prism-core.js` is not `components/prism-core.js`** — it is the default
+`prism.js` bundle, so it already carries markup, css, **clike** and javascript.
+That is why no `prism-clike.js` is vendored even though c/cpp/csharp/java/kotlin/
+ruby all `require` it.
+
+The later grammars are upstream's own pre-minified `components/*.min.js` rather
+than a Terser pass over the source, so they are byte-for-byte what npm ships;
+the file name drops `.min` to match the existing ones. A grammar that extends
+another must be loaded after it, which is why `web/index.html` lists
+`markup-templating` before `php` and `scss` after `css`.
+
+`web/index.html` and `web/js-tests/headless-test.html` must load the **same**
+set: the browser tests run against the harness page, so a grammar missing there
+fails only in tests, and one missing from `index.html` fails only in the app.
+`unit:language-coverage` asserts every language the app can resolve actually has
+a grammar loaded.
 
 ## marked notes
 

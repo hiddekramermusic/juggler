@@ -10,6 +10,7 @@
 import { createCopyButton } from './copy-button.js';
 import { externalURLFromHref } from './window-control.js';
 import { TASK_STATES, TASK_LABELS, TASK_MARKER_RE } from './task-markers.js';
+import { highlightCode } from './syntax-highlight.js';
 
 /**
  * Escape XML/HTML tags that appear outside of code blocks
@@ -731,10 +732,45 @@ export function looksLikeMarkdown(text) {
 }
 
 /**
- * Post-process a freshly-rendered markdown element: add our standard
- * copy-to-clipboard button to every `<pre>` code block, and wrap every
- * `<table>` in a horizontal-scroll container so a table wider than the panel
- * can be scrolled instead of silently spilling off the edge.
+ * Largest fenced block we syntax-highlight. Tokenising is linear in the source,
+ * but a pathological block (a pasted minified bundle) still costs more than the
+ * colour is worth, and it stays perfectly readable as plain text.
+ */
+const MAX_HIGHLIGHT_CHARS = 100_000;
+
+/**
+ * Syntax-highlight one rendered code block in place.
+ *
+ * Runs on the safe side of the sanitiser: the source is read back out of the DOM
+ * as text (so whatever marked emitted has already been through
+ * {@link sanitizeRenderedHtml}), and `highlightCode` escapes what it does not
+ * tokenise. Nothing attacker-controlled can therefore reach `innerHTML` here,
+ * which is why highlighting is done as a DOM pass rather than through a `marked`
+ * renderer override — the trust boundary stays exactly where it was.
+ * @param {HTMLPreElement} pre - A rendered `<pre>` from marked.
+ */
+function highlightCodeBlock(pre) {
+  const code = pre.querySelector('code');
+  // `data-highlighted` keeps a re-decorate (streaming re-renders the live tail)
+  // from re-tokenising a block that is already coloured.
+  if (!code || code.dataset.highlighted === 'true') return;
+
+  const language = Array.from(code.classList)
+    .find((name) => name.startsWith('language-'))?.slice('language-'.length) || '';
+  if (!language) return;
+
+  const source = code.textContent || '';
+  if (!source || source.length > MAX_HIGHLIGHT_CHARS) return;
+
+  code.innerHTML = highlightCode(source, language);
+  code.dataset.highlighted = 'true';
+}
+
+/**
+ * Post-process a freshly-rendered markdown element: syntax-highlight every
+ * fenced code block, add our standard copy-to-clipboard button to every `<pre>`,
+ * and wrap every `<table>` in a horizontal-scroll container so a table wider
+ * than the panel can be scrolled instead of silently spilling off the edge.
  *
  * `renderMarkdown` returns an HTML string, so it cannot wire up live buttons or
  * wrappers; callers that insert that HTML into the DOM call this on the
@@ -742,14 +778,22 @@ export function looksLikeMarkdown(text) {
  * context (`.code-block-wrap`) so the button stays pinned to the visible corner
  * even when the code scrolls horizontally. Each `<table>` is wrapped in a
  * `.table-scroll-wrap` (a `<table>` ignores `overflow`, so it needs a block
- * ancestor to scroll). Idempotent: an element already inside its wrapper is
- * skipped, so re-running on the same subtree is a no-op.
+ * ancestor to scroll). Idempotent: an element already inside its wrapper — or
+ * already highlighted — is skipped, so re-running on the same subtree is a no-op.
  * @param {HTMLElement|null|undefined} root - Container holding rendered markdown.
+ * @param {object} [options] - Decoration options.
+ * @param {boolean} [options.highlight=true] - Syntax-highlight fenced blocks.
+ *   Pass false for content still being streamed: a fence that is still arriving
+ *   would be re-tokenised on every delta, and its tokens would be wrong anyway
+ *   until it closes. The caller highlights once the text settles.
  */
-export function decorateCodeBlocks(root) {
+export function decorateCodeBlocks(root, options = {}) {
   if (!root || typeof root.querySelectorAll !== 'function') return;
+  const { highlight = true } = options;
 
   root.querySelectorAll('pre').forEach((pre) => {
+    if (highlight) highlightCodeBlock(/** @type {HTMLPreElement} */ (pre));
+
     // Skip a <pre> we've already wrapped (e.g. on a redundant re-decorate).
     if (pre.parentElement?.classList.contains('code-block-wrap')) return;
 

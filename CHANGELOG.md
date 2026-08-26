@@ -12,6 +12,7 @@ of changes; this project follows semantic versioning.
 - MCP servers connect at startup, so the first turn of a session can use their tools
 - The extension guide now covers info cards, file viewers, settings and secrets
 - Lots of work on making remote connections over slow networks more efficient and robust
+- Code blocks in chat messages are now syntax-highlighted
 - Highlighting added for Rust, Java, C/C++, C#, Ruby, PHP, Swift, Kotlin, YAML, TOML, SQL, SCSS
 - Block comments and multi-line strings keep their colour in line-numbered code
 

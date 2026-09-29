@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"juggler/cmd/juggler/core"
@@ -148,6 +149,26 @@ type winEntry struct {
 	// drag); stopSave ends the per-window save loop when the window closes.
 	saves    *windowgeom.Debouncer
 	stopSave chan struct{}
+
+	// leftFillState is set when this window has just come out of maximised or
+	// fullscreen, and cleared by the save loop once it has acted on it. It is
+	// what gates the mid-session strand rescue: leaving a filled state is the
+	// one move that drops a window onto a frame nobody chose and nobody can see
+	// (Windows restores the pre-maximise frame verbatim, stale or not), so it is
+	// the only settled frame worth second-guessing.
+	//
+	// Every other move is somebody's decision — the user's, or that of a tiling
+	// window manager that hides a window by parking it outside every display.
+	// AeroSpace does exactly that, and rescuing those moves fought it: it parked
+	// the window, we dragged it back to the middle of the desktop, it parked it
+	// again, and the window strobed across whichever workspace the user was
+	// actually looking at.
+	//
+	// Written from the main thread (the window event), read from the save loop,
+	// hence atomic rather than the registry goroutine the rest of winEntry's
+	// shared fields live on — it is one bit with no other state to stay
+	// consistent with.
+	leftFillState atomic.Bool
 
 	// forceClose is set (via the registry goroutine) once the busy-work close
 	// guard has been satisfied — either the server had no in-flight turn or the
@@ -1251,6 +1272,16 @@ func (a *appState) buildWindow(spec windowSpec, serverURL string, serverProc *ex
 	go a.saveLoop(e)
 	win.OnWindowEvent(events.Common.WindowDidMove, func(_ *application.WindowEvent) { e.triggerSave() })
 	win.OnWindowEvent(events.Common.WindowDidResize, func(_ *application.WindowEvent) { e.triggerSave() })
+	// Coming out of maximised or fullscreen is the one move that can strand a
+	// window without anyone having asked for it — see leftFillState. Mark it so
+	// the settle that follows checks, and trigger that settle here rather than
+	// relying on the restore to emit a move of its own.
+	leftFill := func(_ *application.WindowEvent) {
+		e.leftFillState.Store(true)
+		e.triggerSave()
+	}
+	win.OnWindowEvent(events.Common.WindowUnMaximise, leftFill)
+	win.OnWindowEvent(events.Common.WindowUnFullscreen, leftFill)
 
 	// Settle the close before the window can be torn down: confirming a discard
 	// and flushing the page's drafts both need a live webview, and this hook is
@@ -1285,11 +1316,14 @@ func (e *winEntry) triggerSave() {
 // left to flush here. Runs on its own goroutine for the window's lifetime.
 func (a *appState) saveLoop(e *winEntry) {
 	e.saves.Run(e.stopSave, func() {
-		// The settled frame is also the moment to notice the window has ended up
-		// somewhere it cannot be seen — most often by being un-maximised back onto
-		// a stale frame. Rescuing before the capture means the frame that gets
-		// written is the corrected one.
-		a.rescueIfStranded(e)
+		// A frame settled straight out of maximised or fullscreen is the one the
+		// window did not choose, so it is the one to check for having landed
+		// somewhere it cannot be seen. Rescuing before the capture means the frame
+		// that gets written is the corrected one. Deliberately not asked of an
+		// ordinary move: see leftFillState for what that cost.
+		if e.leftFillState.Swap(false) {
+			a.rescueIfStranded(e)
+		}
 		if s, ok := a.currentWindowState(e); ok {
 			putWindowState(e.serverURL, e.role, s)
 		}
